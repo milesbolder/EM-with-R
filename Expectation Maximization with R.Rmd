@@ -1,0 +1,155 @@
+---
+title: "MSRP Term Project"
+author: "Miles Schneider"
+date: "6/8/2018"
+output: html_document
+---
+
+#Expectation Maximization with R
+Expectation Maximation (EM) is an algorithm for estimating probability distributions underlying a dataset where there may be latent variables or missing information. The algorithm starts out with random parameters, which fit generated distributions to the data over repeated iterations. At each iteration, the parameters are updated to values slightly closer to what is actually represented in the dataset. When the parameter change in an iteration nears zero (actually, some threshold set near zero), the algorithm stops, having reached its end-calculations.   
+I must, as usual, give heaps of credit to numerous R users on the Web, as I spent most of the project process just getting up to speed on what they had written. Here and there, I stitched together code from diffent authors into the Frankenstein's monster below.  
+I did not end up having time to use this script on any "real" datasets, so for now the generated data will have to do. Enjoy!  
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+scipen = 999
+library(mixtools)
+library(MASS)
+set.seed(100)
+```
+```{r}
+# Function to generate 
+# n is number of datapoints
+# k is number of normal distributions f rom which n datapoints are drawn 
+# d is number of dimensions the normal distributions exist within
+
+gen.mix <- function(n, k, mu, sig) {
+    d <- length(mu[1,]) 
+    result <- matrix(rep(NA,n*d), ncol=d)
+    colnames(result) <- paste0("X",1:d)
+    for(i in 1:n) {
+        result[i,] <- mvrnorm(1, mu = mu[k[i],], Sigma=sig[,,k[i]])
+        
+    }
+    
+    result
+}
+
+# Generate Gaussians
+# pi is the mixing coefficients
+# mu are distribution means
+# sigs (sigmas) define variance
+
+n <- 360
+mu <- matrix(c(0.40,0.30,
+               6.5, 5), ncol=2, byrow=T)
+sigs <- array(rep(NA,2*2*3), c(2,2,3))
+sigs[,,1] <- matrix(c(.25, .21, .21,.25), nrow=2, byrow=TRUE)
+sigs[,,2] <- matrix(c(.25,-.21,-.21,.25), nrow=2, byrow=TRUE)
+pi <- c(.2,.3) 
+classes <- sample(1:2, n, replace=TRUE, prob=pi)
+
+mydata <- gen.mix(n, classes, mu, sigs)
+
+# Plot it
+plot(mydata,  col="black", xlab="X1", ylab="X2", pch=19)
+
+# Just to simplify things later on
+x <- mydata
+
+# initial values
+pi1<-0.5
+pi2<-0.5
+mu1<--0.01
+mu2<-0.01
+sigma1<-sqrt(0.01)
+sigma2<-sqrt(0.02)
+
+# A method of using kmeans to initializing parameters closer to where they should end up. Could not get it to work without some bugginess, so used arbitrary intial values (as seen above), which I had seen worked for a different EM method someone else had authored. Left here as a point of interest.
+# mem <- kmeans(x,2)$cluster
+# mu1 <- mean(x[mem==1])
+# mu2 <- mean(x[mem==2])
+# sigma1 <- sd(x[mem==1])
+# sigma2 <- sd(x[mem==2])
+# pi1 <- sum(mem==1)/length(mem)
+# pi2 <- sum(mem==2)/length(mem)
+
+# Ensures only finite values are passed through
+sum.finite <- function(x) {
+  sum(x[is.finite(x)])
+}
+
+Q <- 0
+# starting value of expected value of the log likelihood
+Q[2] <- sum.finite(log(pi1)+log(dnorm(x, mu1, sigma1))) + sum.finite(log(pi2)+log(dnorm(x, mu2, sigma2)))
+
+k <- 2
+
+# EM algorithm
+while (abs(Q[k]-Q[k-1])>=1e-6) {
+  # E step
+  comp1 <- pi1 * dnorm(x, mu1, sigma1)
+  comp2 <- pi2 * dnorm(x, mu2, sigma2)
+  comp.sum <- comp1 + comp2
+  
+  p1 <- comp1/comp.sum
+  p2 <- comp2/comp.sum
+  
+  # M step
+  pi1 <- sum.finite(p1) / length(x)
+  pi2 <- sum.finite(p2) / length(x)
+  
+  mu1 <- sum.finite(p1 * x) / sum.finite(p1)
+  mu2 <- sum.finite(p2 * x) / sum.finite(p2)
+  
+  sigma1 <- sqrt(sum.finite(p1 * (x-mu1)^2) / sum.finite(p1))
+  sigma2 <- sqrt(sum.finite(p2 * (x-mu2)^2) / sum.finite(p2))
+  
+  p1 <- pi1 
+  p2 <- pi2
+  
+  k <- k + 1
+  Q[k] <- sum(log(comp.sum))
+}
+
+# Plot result
+hist(x, prob=T, breaks=32, xlim=c(range(x)[1], range(x)[2]), main='', col = "gray")
+lines(density(x), col="green", lwd=2)
+
+x1 <- seq(from=range(x)[1], to=range(x)[2], length.out=1000)
+y <- pi1 * dnorm(x1, mean=mu1, sd=sigma1) + pi2 * dnorm(x1, mean=mu2, sd=sigma2)
+
+legend('top', col=c("green", "red", "blue"), lwd=2, legend=c("actual", "est. distribution 1", "est. distribution 2"))
+lines(x1, pi1*dnorm(x1, mean=mu1, sd=sigma1), col="red")
+lines(x1, pi2*dnorm(x1, mean=mu2, sd=sigma2), col="blue")
+
+```
+
+##And for comparison's sake
+We compare how our script did next to a purpose-built EM library. Strangely, I could not find a way to gracefully plot the same kind of graph for a more reasonable comparison, but I'm sure I could with enough time...
+
+```{r}
+# Assign copmarison model to EM function and plot it
+# k is number of distributions to identify
+# epsilon is threshold for convergence
+# dots are datapoints
+# circles are density distributions determined by the algorithm
+# dots and circles are color-matched according to which distributions the algorithm determines each datapoint was generated from
+model <- mvnormalmixEM(mydata, k=2, epsilon=1e-04)
+plot(model, which=2)
+
+```
+
+Qualitatively, we can see that both methods identify the clusters quite well. Success!
+
+###Tons of credit to the many EM projects I found online
+I played with all these models, but the one above was by far the smoothest. Most others I ran into a wall with at some point or other. All helped me immensely to understand the process and code.  
+
+https://stats.stackexchange.com/questions/55132/em-algorithm-manually-implemented  
+http://www.di.fc.ul.pt/~jpn/r/EM/EM.html  
+http://www.di.fc.ul.pt/~jpn/r/EM/GaussianMix.html  
+http://rstudio-pubs-static.s3.amazonaws.com/154174_78c021bc71ab42f8add0b2966938a3b8.html  
+https://rpubs.com/H_Zhu/246450 <- source for most of the above  
+http://tinyheero.github.io/2016/01/03/gmm-em.html  
+https://www.r-bloggers.com/maximize-your-expectations/  
+
